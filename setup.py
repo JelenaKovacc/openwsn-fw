@@ -1,10 +1,13 @@
+import json
 import os
 import platform
+import re
 import subprocess
 import sys
 import logging
 from setuptools import setup, Extension
 from setuptools.command.build_ext import build_ext
+from setuptools.command.install import install
 
 # Filename for the C extension module library
 c_module_name = '_openmote'
@@ -35,6 +38,103 @@ class CMakeExtension(Extension):
         self.cmake_lists_dir = os.path.abspath(cmake_lists_dir)
 
 
+class PreInstallCommand(install):
+    print("running pre-install scripts")
+
+    def run(self):
+        base_path = os.path.abspath('.')
+
+        with open(os.path.join(base_path, 'openwsn', 'opendefs.py'), 'w') as f:
+            f.write('component_codes = ')
+            f.write(json.dumps(self.extract_component_codes(base_path)))
+            f.write('\n')
+            f.write('log_descriptions = ')
+            f.write(json.dumps(self.extract_log_descriptions(base_path)))
+
+        with open(os.path.join(base_path, 'openwsn', 'sixtop.py'), 'w') as f:
+            f.write('sixtop_rcs = ')
+            f.write(json.dumps(self.extract_6top_rcs(base_path)))
+            f.write('\n')
+            f.write('sixtop_states = ')
+            f.write(json.dumps(self.extract_6top_states(base_path)))
+
+        install.run(self)
+
+    @staticmethod
+    def extract_component_codes(base_path):
+        codes_found = {}
+
+        for line in open(os.path.join(base_path, 'inc', 'opendefs.h'), 'r'):
+            m = re.search(' *COMPONENT_([^ .]*) *= *(.*), *', line)
+            if m:
+                name = m.group(1)
+                try:
+                    code = int(m.group(2), 16)
+                except ValueError:
+                    logging.error("component '{}' - {} is not a hex number".format(name, m.group(2)))
+                else:
+                    logging.debug("extracted component '{}' with code {}".format(name, code))
+                    codes_found[code] = name
+
+        return codes_found
+
+    @staticmethod
+    def extract_log_descriptions(base_path):
+
+        codes_found = {}
+        for line in open(os.path.join(base_path, 'inc', 'opendefs.h'), 'r'):
+            m = re.search(' *ERR_.* *= *([xXA-Fa-f0-9]*), *// *(.*)', line)
+            if m:
+                desc = m.group(2).strip()
+                try:
+                    code = int(m.group(1), 16)
+                except ValueError:
+                    logging.error("log description '{}' - {} is not a hex number".format(desc, m.group(2)))
+                else:
+                    logging.debug("extracted log description '{}' with code {}".format(desc, code))
+                    codes_found[code] = desc
+
+        return codes_found
+
+    @staticmethod
+    def extract_6top_rcs(base_path):
+        # find sixtop return codes in sixtop.h
+
+        codes_found = {}
+        for line in open(os.path.join(base_path, 'openstack', '02b-MAChigh', 'sixtop.h'), 'r'):
+            m = re.search(' *#define *IANA_6TOP_RC_([^ .]*) *([xXA-Za-z0-9]+) *// *([^ .]*).*', line)
+            if m:
+                name = m.group(3)
+                try:
+                    code = int(m.group(2), 16)
+                except ValueError:
+                    logging.error("return code '{}': {} is not a hex number".format(name, m.group(2)))
+                else:
+                    logging.debug("extracted 6top RC '{}' with code {}".format(name, code))
+                    codes_found[code] = name
+
+        return codes_found
+
+    @staticmethod
+    def extract_6top_states(base_path):
+        # find sixtop state codes in sixtop.h
+
+        codes_found = {}
+        for line in open(os.path.join(base_path, 'openstack', '02b-MAChigh', 'sixtop.h'), 'r'):
+            m = re.search(' *SIX_STATE_([^ .]*) *= *([^ .]*), *', line)
+            if m:
+                name = m.group(1)
+                try:
+                    code = int(m.group(2), 16)
+                except ValueError:
+                    logging.error("state '{}' - {} is not a hex number".format(name, m.group(2)))
+                else:
+                    logging.debug("extracted 6top state '{}' with code {}".format(name, code))
+                    codes_found[code] = name
+
+        return codes_found
+
+
 class CMakeBuild(build_ext):
     def build_extensions(self):
         # Ensure that CMake is present and working
@@ -51,11 +151,9 @@ class CMakeBuild(build_ext):
 
             cmake_args = [
                 '-DCMAKE_BUILD_TYPE=%s' % cfg,
-                # Ask CMake to place the resulting library in the directory
-                # containing the extension
+                # Ask CMake to place the resulting library in the directory containing the extension
                 '-DCMAKE_LIBRARY_OUTPUT_DIRECTORY_{}={}'.format(cfg.upper(), ext_dir),
-                # Other intermediate static libraries are placed in a
-                # temporary build directory instead
+                # Other intermediate static libraries are placed in a temporary build directory instead
                 '-DCMAKE_ARCHIVE_OUTPUT_DIRECTORY_{}={}'.format(cfg.upper(), self.build_temp),
             ]
 
@@ -89,6 +187,7 @@ class CMakeBuild(build_ext):
 
             # Build
             subprocess.check_call(['cmake', '--build', '.', '--config', cfg], cwd=self.build_temp)
+            pass
 
 
 setup(name='openwsn',
@@ -98,5 +197,8 @@ setup(name='openwsn',
       author='Timothy Claeys',
       author_email='timothy.claeys@gmail.com',
       ext_modules=[CMakeExtension(c_module_name)],
-      cmdclass={'build_ext': CMakeBuild},
+      cmdclass={
+          'build_ext': CMakeBuild,
+          'install': PreInstallCommand
+      },
       zip_safe=False)
