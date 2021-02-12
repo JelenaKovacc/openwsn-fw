@@ -3,6 +3,7 @@ import os
 import platform
 import re
 import subprocess
+
 import sys
 import logging
 from setuptools import setup, Extension
@@ -12,11 +13,16 @@ from setuptools.command.install import install
 # Filename for the C extension module library
 c_module_name = '_openmote'
 
+enable_configure = False
+
 # Command line flags forwarded to CMake (for debug purpose)
 cmake_cmd_args = []
 for f in sys.argv:
     if f.startswith('-D'):
         cmake_cmd_args.append(f)
+    elif f.startswith('--configure'):
+        enable_configure = True
+        sys.argv.remove(f)
 
 for f in cmake_cmd_args:
     sys.argv.remove(f)
@@ -182,8 +188,12 @@ class CMakeBuild(build_ext):
 
             # Config
             subprocess.check_call(
-                ['cmake', ext.cmake_lists_dir, '-DBOARD:STRING=python', '-DPROJECT:STRING=oos_openwsn'] + cmake_args,
+                ['cmake', ext.cmake_lists_dir, '-DBOARD:STRING=python',
+                 '-DPROJECT:STRING=oos_openwsn'] + cmake_args,
                 cwd=self.build_temp)
+
+            if enable_configure:
+                subprocess.check_call(['ccmake', ext.cmake_lists_dir], cwd=self.build_temp)
 
             # Build
             subprocess.check_call(['cmake', '--build', '.', '--config', cfg], cwd=self.build_temp)
